@@ -6,59 +6,77 @@ from playwright.async_api import async_playwright
 from telegram import Bot
 from googletrans import Translator
 
+# =========================
+# CONFIG
+# =========================
+
 BOT_TOKEN = "8807434169:AAFjQK1be1u1xjkN_0cbjsIOjy2JdPPksso"
 CHANNEL_ID = "@fabrizioromanoruskiy"
 
-TWITTER_URL = "https://x.com/gazaryan001"
+TWITTER_URL = "https://x.com/FabrizioRomano"
 
 CHECK_INTERVAL = 20
 
 translator = Translator()
-bot = Bot(token=BOT_TOKEN)
 
+bot = Bot(token=BOT_TOKEN)
 
 # =========================
 # LAST TWEET STORAGE
 # =========================
 
 def save_last_tweet(tweet_id):
-    with open("seen.txt", "w") as f:
+
+    with open("seen.txt", "w", encoding="utf-8") as f:
         f.write(tweet_id)
 
 
 def load_last_tweet():
+
     try:
-        with open("seen.txt", "r") as f:
+
+        with open("seen.txt", "r", encoding="utf-8") as f:
             return f.read().strip()
+
     except:
         return None
 
 
 last_tweet = load_last_tweet()
 
-
 # =========================
 # TRANSLATION
 # =========================
 
 def translate_text(text):
-    try:
-        translated = translator.translate(text, dest="ru")
-        return translated.text
-    except Exception as e:
-        print("TRANSLATE ERROR:", e)
-        return text
 
+    try:
+
+        translated = translator.translate(
+            text,
+            dest="ru"
+        )
+
+        return translated.text
+
+    except Exception as e:
+
+        print("TRANSLATE ERROR:", e)
+
+        return text
 
 # =========================
 # TELEGRAM
 # =========================
 
 async def send_post(text, image_path=None):
+
     try:
+
         if image_path and os.path.exists(image_path):
 
             with open(image_path, "rb") as photo:
+
                 await bot.send_photo(
                     chat_id=CHANNEL_ID,
                     photo=photo,
@@ -67,15 +85,17 @@ async def send_post(text, image_path=None):
                 )
 
         else:
+
             await bot.send_message(
                 chat_id=CHANNEL_ID,
                 text=text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                disable_web_page_preview=False
             )
 
     except Exception as e:
-        print("TG ERROR:", e)
 
+        print("TG ERROR:", e)
 
 # =========================
 # DOWNLOAD IMAGE
@@ -84,6 +104,7 @@ async def send_post(text, image_path=None):
 def download_image(url):
 
     try:
+
         os.makedirs("media", exist_ok=True)
 
         path = "media/latest.jpg"
@@ -96,19 +117,31 @@ def download_image(url):
         return path
 
     except Exception as e:
-        print("IMAGE ERROR:", e)
-        return None
 
+        print("IMAGE ERROR:", e)
+
+        return None
 
 # =========================
 # CLEAN TEXT
 # =========================
+
+import re
+
+import re
 
 def clean_tweet_text(raw_text):
 
     lines = raw_text.split("\n")
 
     cleaned = []
+
+    banned = [
+        "Закреплено",
+        "Pinned",
+        "Replying",
+        "Quote"
+    ]
 
     for line in lines:
 
@@ -117,45 +150,49 @@ def clean_tweet_text(raw_text):
         if not line:
             continue
 
-        banned = [
-            "Закреплено",
-            "Pinned",
-            "Quote",
-            "Replying",
-            "GIF",
-            "ALT",
-        ]
-
+        # мусор
         if line in banned:
             continue
 
-        # статистика
-        if (
-            "тыс." in line
-            or "млн" in line
-            or line.isdigit()
+        # username
+        if line.startswith("@"):
+            continue
+
+        # время
+        if re.match(r"^\d+[smhd]$", line):
+            continue
+
+        # просмотры/статистика
+        if re.match(r"^[\d\.,]+\s?[KMB]?$", line):
+            continue
+
+        if any(
+            x in line.lower()
+            for x in [
+                "views",
+                "view",
+                "reposts",
+                "likes",
+                "replies"
+            ]
         ):
             continue
 
-        # ссылки
-        if "http" in line:
-            continue
-
-        # дубликаты
-        if line in cleaned:
+        # ссылки media
+        if "pic.twitter.com" in line:
             continue
 
         cleaned.append(line)
 
-    # убираем имя и username
-    if len(cleaned) > 2:
-        cleaned = cleaned[2:]
+    # убираем имя аккаунта
+    if len(cleaned) > 0:
 
-    text = "\n".join(cleaned[:8])
+        if "Fabrizio Romano" in cleaned[0]:
+            cleaned.pop(0)
 
-    return text
+    text = "\n".join(cleaned)
 
-
+    return text.strip()
 # =========================
 # SCRAPING
 # =========================
@@ -167,8 +204,12 @@ async def get_latest_tweet(page):
         wait_until="domcontentloaded",
         timeout=60000
     )
-    await context.storage_state(path="state.json")
-    await page.wait_for_timeout(5000)
+
+    await page.wait_for_timeout(8000)
+
+    await page.mouse.wheel(0, 1500)
+
+    await page.wait_for_timeout(3000)
 
     articles = page.locator("article")
 
@@ -179,54 +220,109 @@ async def get_latest_tweet(page):
     if count == 0:
         return None
 
-    first = articles.first
+    latest_tweet = None
+    latest_time = None
 
-    raw_text = await first.inner_text()
+    for i in range(count):
 
-    text = clean_tweet_text(raw_text)
+        try:
 
-    # LINKS
-    links = await first.locator("a").evaluate_all(
-        "els => els.map(e => e.href)"
-    )
+            article = articles.nth(i)
 
-    tweet_link = None
+            # время tweet
+            time_element = article.locator("time")
 
-    for link in links:
-        if "/status/" in link:
-            tweet_link = link
-            break
+            if await time_element.count() == 0:
+                continue
 
-    # IMAGES
-    image_url = None
+            datetime_value = await time_element.get_attribute(
+                "datetime"
+            )
 
-    images = await first.locator("img").evaluate_all(
-        "els => els.map(e => e.src)"
-    )
+            if not datetime_value:
+                continue
 
-    for img in images:
-        if "media" in img:
-            image_url = img
-            break
+            # текст
+            raw_text = await article.inner_text()
 
-    return {
-        "text": text,
-        "url": tweet_link,
-        "image": image_url
-    }
+            # пропускаем закреп
+            if "Закреплено" in raw_text or "Pinned" in raw_text:
+                continue
 
+            text = clean_tweet_text(raw_text)
 
+            # ссылка
+            links = await article.locator("a").evaluate_all(
+                "els => els.map(e => e.href)"
+            )
+
+            tweet_link = None
+
+            for link in links:
+
+                if "/status/" in link:
+
+                    tweet_link = link
+
+                    break
+
+            if not tweet_link:
+                continue
+
+            # картинки
+            image_url = None
+
+            images = await article.locator("img").evaluate_all(
+                "els => els.map(e => e.src)"
+            )
+
+            for img in images:
+
+                if "media" in img:
+
+                    image_url = img
+
+                    break
+
+            # выбираем самый новый
+            if (
+                latest_time is None
+                or datetime_value > latest_time
+            ):
+
+                latest_time = datetime_value
+
+                latest_tweet = {
+                    "text": text,
+                    "url": tweet_link,
+                    "image": image_url
+                }
+
+        except Exception as e:
+
+            print("ARTICLE ERROR:", e)
+
+    return latest_tweet
 # =========================
 # FORMAT POST
 # =========================
 
-def build_message(original_text, translated_text, tweet_url):
+def build_message(
+    original_text,
+    translated_text,
+    tweet_url
+):
 
-    here_we_go = "HERE WE GO" in original_text.upper()
+    here_we_go = (
+        "HERE WE GO" in original_text.upper()
+    )
 
     if here_we_go:
+
         title = "🚨 <b>HERE WE GO!</b>"
+
     else:
+
         title = "⚡️ <b>Fabrizio Romano</b>"
 
     message = (
@@ -236,7 +332,6 @@ def build_message(original_text, translated_text, tweet_url):
     )
 
     return message
-
 
 # =========================
 # MAIN LOOP
@@ -255,17 +350,21 @@ async def main():
         )
 
         context = await browser.new_context(
-            storage_state="state.json"
+            storage_state="state.json",
+            viewport={
+                "width": 1400,
+                "height": 1000
+            },
+            user_agent="Mozilla/5.0",
+            locale="en-US"
         )
+
         page = await context.new_page()
-        input("После логина нажми Enter...")
 
-        await context.storage_state(path="state.json")
-
-        print("STATE SAVED")
         while True:
 
             try:
+
                 print("CHECKING...")
 
                 tweet = await get_latest_tweet(page)
@@ -279,27 +378,37 @@ async def main():
 
                         last_tweet = tweet["url"]
 
-                        save_last_tweet(last_tweet)
+                        save_last_tweet(
+                            last_tweet
+                        )
 
                         print("FIRST RUN SKIP")
 
-                        await asyncio.sleep(CHECK_INTERVAL)
+                        await asyncio.sleep(
+                            CHECK_INTERVAL
+                        )
 
                         continue
 
                     # уже отправляли
                     if tweet["url"] == last_tweet:
 
-                        await asyncio.sleep(CHECK_INTERVAL)
+                        await asyncio.sleep(
+                            CHECK_INTERVAL
+                        )
 
                         continue
 
                     # новый пост
                     last_tweet = tweet["url"]
 
-                    save_last_tweet(last_tweet)
+                    save_last_tweet(
+                        last_tweet
+                    )
 
-                    translated = translate_text(tweet["text"])
+                    translated = translate_text(
+                        tweet["text"]
+                    )
 
                     message = build_message(
                         tweet["text"],
@@ -310,7 +419,10 @@ async def main():
                     image_path = None
 
                     if tweet["image"]:
-                        image_path = download_image(tweet["image"])
+
+                        image_path = download_image(
+                            tweet["image"]
+                        )
 
                     await send_post(
                         message,
@@ -320,9 +432,11 @@ async def main():
                     print("POSTED")
 
             except Exception as e:
+
                 print("ERROR:", e)
 
-            await asyncio.sleep(CHECK_INTERVAL)
-
+            await asyncio.sleep(
+                CHECK_INTERVAL
+            )
 
 asyncio.run(main())
