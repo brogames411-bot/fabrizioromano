@@ -3,7 +3,6 @@ import os
 import requests
 
 from playwright.async_api import async_playwright
-from telegram import Bot
 from googletrans import Translator
 
 # =========================
@@ -19,7 +18,6 @@ CHECK_INTERVAL = 20
 
 translator = Translator()
 
-bot = Bot(token=BOT_TOKEN)
 
 # =========================
 # LAST TWEET STORAGE
@@ -75,23 +73,37 @@ async def send_post(text, image_path=None):
 
         if image_path and os.path.exists(image_path):
 
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+
             with open(image_path, "rb") as photo:
 
-                await bot.send_photo(
-                    chat_id=CHANNEL_ID,
-                    photo=photo,
-                    caption=text,
-                    parse_mode="HTML"
+                response = requests.post(
+                    url,
+                    files={"photo": photo},
+                    data={
+                        "chat_id": CHANNEL_ID,
+                        "caption": text[:1024],
+                        "parse_mode": "HTML"
+                    }
                 )
+
+                print(response.text)
 
         else:
 
-            await bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=text,
-                parse_mode="HTML",
-                disable_web_page_preview=False
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+            response = requests.post(
+                url,
+                data={
+                    "chat_id": CHANNEL_ID,
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": False
+                }
             )
+
+            print(response.text)
 
     except Exception as e:
 
